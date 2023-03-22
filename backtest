@@ -1,99 +1,196 @@
-import yfinance as yf
-import pandas as pd
+import requests
+
+# Replace with your own API credentials
+api_key = "your_api_key"
+api_secret = "your_api_secret"
+
+# Authenticate and get access token
+auth_url = "https://api.fyers.in/api/v1/token"
+auth_data = {
+    "appId": api_key,
+    "secretKey": api_secret,
+    "grantType": "authorization_code",
+    "code": "",
+    "redirectUri": "https://api.fyers.in/api/v1/redirect"
+}
+auth_response = requests.post(auth_url, data=auth_data).json()
+access_token = auth_response["accessToken"]
+
+# Get market data using TrueData API
+market_data_url = "https://api.truedata.in/brokerage/1.0/live-feed-data/subscription"
+market_data_params = {
+    "accessToken": access_token,
+    "instrumentIds": "NFO:NIFTY21JUNFUT,NFO:BANKNIFTY21JUNFUT",
+    "exchange": "NFO",
+    "clientCode": "",
+    "dataNeeded": "ohlc,ltt,ltp",
+    "compression": "NONE",
+    "numberOfDays": 1
+}
+market_data_response = requests.get(market_data_url, params=market_data_params).json()
 
 
-# Define the ticker symbol for the stock you want to trade
-ticker_symbol = 'TCS'
+import webbrowser
+import requests
+from fyers_api import accessToken
 
-# Define the start and end dates for the data
-start_date = "2020-01-01"
-end_date = "2022-03-20"
+# Replace with your own API credentials
+client_id = "your_client_id"
+client_secret = "your_client_secret"
 
-# Fetch the data from Yahoo Finance API
-stock_data = yf.download(ticker_symbol, start=start_date, end=end_date)
+# Set the redirect URL for your app
+redirect_uri = "http://localhost"
 
-# Print the first 5 rows of the data
-print(stock_data.head())
+# Open the authorization URL in a web browser and ask the user to authorize our app
+authorization_url = f"https://api.fyers.in/api/v1/auth/authenticate?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code"
+webbrowser.open(authorization_url)
 
-# Define the period for calculating the moving average and standard deviation
-period = 20
+# Wait for the user to authorize our app and enter the authorization code
+authorization_code = input("Enter authorization code: ")
 
-# Calculate the moving average
-stock_data['MA'] = stock_data['Close'].rolling(window=period).mean()
+# Get the access token using the authorization code
+access_token = accessToken.generate_token(client_id=client_id, secret_key=client_secret, redirect_uri=redirect_uri, authorization_code=authorization_code)
 
-# Calculate the standard deviation
-stock_data['STD'] = stock_data['Close'].rolling(window=period).std()
+# Print the access token
+print(access_token)
 
-# Print the first 5 rows of the data with moving average and standard deviation
-print(stock_data.head())
+import fyers_api
+import time
+import datetime
 
+# Replace with your own API credentials
+api_key = "your_api_key"
+api_secret = "your_api_secret"
+access_token = "your_access_token"
 
-# Define the number of standard deviations for upper and lower bounds
-num_std = 2
+# Initialize Fyers API client
+fyers = fyers_api.Fyers(api_key=api_key, secret_key=api_secret, access_token=access_token)
 
-# Calculate the upper and lower bounds
-stock_data['Upper'] = stock_data['MA'] + (stock_data['STD'] * num_std)
-stock_data['Lower'] = stock_data['MA'] - (stock_data['STD'] * num_std)
+class MyStrategy:
+    def __init__(self):
+        self.prices = []
+        self.volumes = []
+        self.orders = []
+        self.positions = []
+        self.upper_breaker = 0
+        self.lower_breaker = float('inf')
+        self.ma_20 = []
 
-# Print the first 5 rows of the data with moving average, standard deviation, upper and lower bounds
-print(stock_data.head())
+    def next(self, price, volume):
+        self.prices.append(price)
+        self.volumes.append(volume)
 
-# Define the initial capital for trading
-initial_capital = 10000
+        # calculate moving averages
+        if len(self.volumes) >= 20:
+            self.ma_20.append(sum(self.volumes[-20:]) / 20)
 
-# Define the number of shares to trade
-num_shares = 10
+        # check for buy signal
+        if price >= self.prices[-2] and price >= self.prices[-3]:
+            if price > self.upper_breaker and volume > self.ma_20[-1]:
+                self.orders.append(('buy', price))
+                self.upper_breaker = price
 
-# Initialize the position
-position = None
+            if self.orders and price < self.prices[-1] and price < self.prices[-2]:
+                order = self.orders.pop()
+                if order[0] == 'buy':
+                    self.positions.append(('long', order[1], price))
+                    self.upper_breaker = 0
 
-# Initialize the list of trades
-trades = []
+        # check for sell signal
+        if price <= self.prices[-2] and price <= self.prices[-3]:
+            if price < self.lower_breaker and volume > self.ma_20[-1]:
+                self.orders.append(('sell', price))
+                self.lower_breaker = price
 
-# Loop through each row in the stock data
-for i, row in stock_data.iterrows():
+            if self.orders and price > self.prices[-1] and price > self.prices[-2]:
+                order = self.orders.pop()
+                if order[0] == 'sell':
+                    self.positions.append(('short', order[1], price))
+                    self.lower_breaker = float('inf')
 
-    # Buy the stock if it crosses the lower bound
-    if row['Close'] < row['Lower'] and position != 'long':
-        # Calculate the number of shares to buy
-        num_buy_shares = int(initial_capital / (num_shares * row['Close']))
-        # Calculate the total cost of buying the shares
-        total_buy_cost = num_buy_shares * num_shares * row['Close']
-        # Subtract the total cost from the initial capital
-        initial_capital -= total_buy_cost
-        # Update the position
-        position = 'long'
-        # Add the trade to the list of trades
-        trades.append(('buy', num_buy_shares, row['Close'], total_buy_cost))
-    
-    # Short the stock if it crosses the upper bound
-    elif row['Close'] > row['Upper'] and position != 'short':
-        # Calculate the number of shares to short
-        num_short_shares = int(initial_capital / (num_shares * row['Close']))
-        # Calculate the total proceeds from shorting the shares
-        total_short_proceeds = num_short_shares * num_shares * row['Close']
-        # Add the total proceeds to the initial capital
-        initial_capital += total_short_proceeds
-        # Update the position
-        position = 'short'
-        # Add the trade to the list of trades
-        trades.append(('short', num_short_shares, row['Close'], total_short_proceeds))
-    
-    # Exit the position if the stock crosses the moving average
-    elif (row['Close'] > row['MA'] and position == 'long') or (row['Close'] < row['MA'] and position == 'short'):
-        # Calculate the profit/loss from the trade
-        last_trade = trades[-1]
-        if last_trade[0] == 'buy':
-            profit_loss = num_shares * (row['Close'] - last_trade[2]) * last_trade[1]
-        elif last_trade[0] == 'short':
-            profit_loss = num_shares * (last_trade[2] - row['Close']) * last_trade[1]
-        # Add the profit/loss to the initial capital
-        initial_capital += profit_loss
-        # Update the position
-        position = None
-        # Add the trade to the list of trades
-        trades.append(('exit', profit_loss, row['Close'], initial_capital))
-        
-# Print the list of trades
-for trade in trades:
-    print(trade)
+    def calculate_signals(self, data):
+        # Implement your trading strategy here
+        # Use the market data in 'data' to calculate trading signals
+        # Return a dictionary of trading signals for each instrument
+        signals = {}
+        for symbol in data:
+            if symbol == "RELIANCE" and data[symbol]['ltp'] > data[symbol]['high']:
+                signals[symbol] = 'sell'
+            elif symbol == "RELIANCE" and data[symbol]['ltp'] < data[symbol]['low']:
+                signals[symbol] = 'buy'
+            elif symbol == "TATASTEEL" and data[symbol]['ltp'] > data[symbol]['high']:
+                signals[symbol] = 'sell'
+            elif symbol == "TATASTEEL" and data[symbol]['ltp'] < data[symbol]['low']:
+                signals[symbol] = 'buy'
+            else:
+                signals[symbol] = 'hold'
+
+        return signals
+    def execute_trades(self, signals):
+        # Execute trades based on trading signals
+        for symbol in signals:
+            # Check if there is already an open trade for the symbol
+            open_orders = fyers.get_orders()
+            has_open_trade = False
+            for order in open_orders:
+                if order["symbol"] == symbol:
+                    has_open_trade = True
+                    break
+            if not has_open_trade:
+                if signals[symbol] == "buy":
+                    # Execute buy order using Fyers API
+                    response = fyers.place_orders(
+                        symbol=symbol,
+                        qty=1,
+                        side="BUY",
+                        type="MARKET",
+                        productType="INTRADAY",
+                        limitPrice=None,
+                        stopPrice=None,
+                        trailingStop=None
+                    )
+                    if response["code"] == 200:
+                        print("Buy order placed for symbol", symbol)
+                elif signals[symbol] == "sell":
+                    # Execute sell order using Fyers API
+                    response = fyers.place_orders(
+                        symbol=symbol,
+                        qty=1,
+                        side="SELL",
+                        type="MARKET",
+                        productType="INTRADAY",
+                        limitPrice=None,
+                        stopPrice=None,
+                        trailingStop=None
+                    )
+                    if response["code"] == 200:
+                        print("Sell order placed for symbol", symbol)
+                        
+# Define symbols as a list
+symbols = ['NSE:INFY', 'NSE:TATAMOTORS', 'NSE:SBIN']
+
+# Define the callback function to receive streaming data
+def streaming_callback(data):
+    # Resample the streaming data to 15 minute intervals
+    resampled_data = {}
+    for symbol, symbol_data in data.items():
+        symbol_df = pd.DataFrame(symbol_data)
+        symbol_df = symbol_df.resample('15T').agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }).dropna()
+        symbol_data_resampled = symbol_df.to_dict(orient='index')
+        resampled_data[symbol] = symbol_data_resampled
+
+    # Calculate trading signals based on resampled market data
+    signals = strategy.calculate_signals(resampled_data)
+
+    # Execute trades based on trading signals
+    strategy.execute_trades(signals)
+
+# Subscribe to streaming market data using Fyers API
+fyers.start_live_feed(symbols=symbols, callback=streaming_callback)
+
